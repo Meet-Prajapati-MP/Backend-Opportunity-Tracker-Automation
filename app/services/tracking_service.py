@@ -3,6 +3,7 @@ from typing import List, Optional
 from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy.orm import selectinload
 from app.models.application import ApplicationTracking
 from app.schemas.application import ApplicationTrackingCreate, ApplicationTrackingUpdate
 
@@ -13,15 +14,28 @@ class TrackingService:
         self.db = db
 
     async def get_by_id(self, tracking_id: UUID) -> Optional[ApplicationTracking]:
-        result = await self.db.execute(select(ApplicationTracking).where(ApplicationTracking.id == tracking_id))
+        result = await self.db.execute(
+            select(ApplicationTracking)
+            .options(selectinload(ApplicationTracking.opportunity))
+            .where(ApplicationTracking.id == tracking_id)
+        )
         return result.scalars().first()
 
     async def get_by_opportunity(self, opportunity_id: UUID) -> Optional[ApplicationTracking]:
-        result = await self.db.execute(select(ApplicationTracking).where(ApplicationTracking.opportunity_id == opportunity_id))
+        result = await self.db.execute(
+            select(ApplicationTracking)
+            .options(selectinload(ApplicationTracking.opportunity))
+            .where(ApplicationTracking.opportunity_id == opportunity_id)
+        )
         return result.scalars().first()
 
     async def get_all(self, skip: int = 0, limit: int = 100) -> List[ApplicationTracking]:
-        result = await self.db.execute(select(ApplicationTracking).offset(skip).limit(limit))
+        result = await self.db.execute(
+            select(ApplicationTracking)
+            .options(selectinload(ApplicationTracking.opportunity))
+            .offset(skip)
+            .limit(limit)
+        )
         return list(result.scalars().all())
 
     async def create(self, obj_in: ApplicationTrackingCreate) -> ApplicationTracking:

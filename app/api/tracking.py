@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
 
+from app.api.compat import FrontendTrackedOpportunity, serialize_tracking
 from app.db.database import get_db
 from app.schemas.application import ApplicationTracking, ApplicationTrackingCreate, ApplicationTrackingUpdate
 from app.services.tracking_service import TrackingService
@@ -37,63 +38,94 @@ class TrackingStatusUpdate(BaseModel):
     priority: Optional[str] = Field(None, description="Priority level")
     timeline: Optional[Dict[str, Any]] = Field(None, description="Timeline details")
 
-@router.post("/save", response_model=ApplicationTracking, status_code=status.HTTP_201_CREATED)
+async def _save_tracking_impl(
+    request: TrackingSaveRequest,
+    service: TrackingService = Depends(get_tracking_service)
+):
+    create_data = ApplicationTrackingCreate(
+        opportunity_id=request.opportunity_id,
+        status=request.status.value.lower(),
+        notes=request.notes
+    )
+    created = await service.create(create_data)
+    refreshed = await service.get_by_id(created.id)
+    return serialize_tracking(refreshed or created)
+
+@router.post("", response_model=FrontendTrackedOpportunity, status_code=status.HTTP_201_CREATED)
 async def save_tracking(
     request: TrackingSaveRequest,
     service: TrackingService = Depends(get_tracking_service)
 ):
-    """
-    Save an opportunity to tracking.
-    Supports status, notes, priority, and timeline features.
-    """
-    create_data = ApplicationTrackingCreate(
-        opportunity_id=request.opportunity_id,
-        status=request.status.value,
-        notes=request.notes
-    )
-    # Priority and timeline support are validated via request schema
-    # but rely on future data model extensions to be fully persisted
-    return await service.create(create_data)
+    return await _save_tracking_impl(request=request, service=service)
 
-@router.patch("/status", response_model=ApplicationTracking)
-async def update_tracking_status(
-    update_data: TrackingStatusUpdate,
+@router.post("/save", response_model=FrontendTrackedOpportunity, status_code=status.HTTP_201_CREATED)
+async def save_tracking_legacy(
+    request: TrackingSaveRequest,
     service: TrackingService = Depends(get_tracking_service)
 ):
-    """
-    Update tracking status, along with notes, priority, and timeline support.
-    """
+    return await _save_tracking_impl(request=request, service=service)
+
+class TrackingStatusPatchRequest(BaseModel):
+    status: str
+    notes: Optional[str] = None
+
+async def _update_tracking_impl(
+    tracking_id: UUID,
+    status: str,
+    notes: Optional[str],
+    service: TrackingService = Depends(get_tracking_service)
+):
     update_schema = ApplicationTrackingUpdate(
-        status=update_data.status.value,
-        notes=update_data.notes
+        status=status.lower(),
+        notes=notes
     )
-    result = await service.update(update_data.tracking_id, update_schema)
+    result = await service.update(tracking_id, update_schema)
     if not result:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, 
             detail="Tracking record not found"
         )
-    return result
+    refreshed = await service.get_by_id(result.id)
+    return serialize_tracking(refreshed or result)
 
-@router.get("/list", response_model=List[ApplicationTracking])
+@router.patch("/{id}", response_model=FrontendTrackedOpportunity)
+async def update_tracking_status_by_id(
+    id: UUID,
+    payload: TrackingStatusPatchRequest,
+    service: TrackingService = Depends(get_tracking_service)
+):
+    return await _update_tracking_impl(tracking_id=id, status=payload.status, notes=payload.notes, service=service)
+
+@router.patch("/status", response_model=FrontendTrackedOpportunity)
+async def update_tracking_status(
+    update_data: TrackingStatusUpdate,
+    service: TrackingService = Depends(get_tracking_service)
+):
+    return await _update_tracking_impl(tracking_id=update_data.tracking_id, status=update_data.status.value, notes=update_data.notes, service=service)
+
+@router.get("", response_model=List[FrontendTrackedOpportunity])
 async def list_tracking(
     skip: int = Query(0, ge=0, description="Pagination skip"),
     limit: int = Query(100, ge=1, le=100, description="Pagination limit"),
     service: TrackingService = Depends(get_tracking_service)
 ):
-    """
-    List all tracked opportunities.
-    """
-    return await service.get_all(skip=skip, limit=limit)
+    items = await service.get_all(skip=skip, limit=limit)
+    return [serialize_tracking(item) for item in items]
+
+@router.get("/list", response_model=List[FrontendTrackedOpportunity])
+async def list_tracking(
+    skip: int = Query(0, ge=0, description="Pagination skip"),
+    limit: int = Query(100, ge=1, le=100, description="Pagination limit"),
+    service: TrackingService = Depends(get_tracking_service)
+):
+    items = await service.get_all(skip=skip, limit=limit)
+    return [serialize_tracking(item) for item in items]
 
 @router.delete("/{id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_tracking(
     id: UUID,
     service: TrackingService = Depends(get_tracking_service)
 ):
-    """
-    Delete a tracking record.
-    """
     if hasattr(service, 'delete'):
         success = await service.delete(id)
         if not success:

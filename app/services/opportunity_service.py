@@ -3,6 +3,7 @@ from typing import List, Optional
 from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 from app.models.opportunity import Opportunity
 from app.schemas.opportunity import OpportunityCreate, OpportunityUpdate
@@ -14,15 +15,28 @@ class OpportunityService:
         self.db = db
 
     async def get_by_id(self, opp_id: UUID) -> Optional[Opportunity]:
-        result = await self.db.execute(select(Opportunity).where(Opportunity.id == opp_id))
+        result = await self.db.execute(
+            select(Opportunity)
+            .options(selectinload(Opportunity.applications))
+            .where(Opportunity.id == opp_id)
+        )
         return result.scalars().first()
 
     async def get_by_url(self, url: str) -> Optional[Opportunity]:
-        result = await self.db.execute(select(Opportunity).where(Opportunity.url == url))
+        result = await self.db.execute(
+            select(Opportunity)
+            .options(selectinload(Opportunity.applications))
+            .where(Opportunity.url == url)
+        )
         return result.scalars().first()
 
     async def get_all(self, skip: int = 0, limit: int = 100) -> List[Opportunity]:
-        result = await self.db.execute(select(Opportunity).offset(skip).limit(limit))
+        result = await self.db.execute(
+            select(Opportunity)
+            .options(selectinload(Opportunity.applications))
+            .offset(skip)
+            .limit(limit)
+        )
         return list(result.scalars().all())
 
     async def create(self, obj_in: OpportunityCreate) -> Optional[Opportunity]:
